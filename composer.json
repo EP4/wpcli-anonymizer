@@ -1,12 +1,24 @@
 {
-    "name": "EP4/wpcli-anonymizer",
+    "name": "ep4/wpcli-anonymizer",
     "type": "wp-cli-package",
     "description": "Anonymize posts and users of an existing WordPress site using WP-CLI",
     "homepage": "https://github.com/EP4/wpcli-anonymizer",
     "license": "MIT",
-    "authors": [],
+    "authors": [
+        {
+            "name": "EP4 Corporation",
+            "homepage": "https://ep4.com",
+            "role": "Owner"
+        },
+        {
+            "name": "Dave Lavoie",
+            "homepage": "https://github.com/davelavoie",
+            "role": "Developer"
+        }
+    ],
     "require": {
-        "wp-cli/wp-cli": "^2.5"
+        "wp-cli/wp-cli": "^2.5",
+        "fzaninotto/faker": "^1.9"
     },
     "require-dev": {
         "wp-cli/wp-cli-tests": "^3.0.11"
@@ -21,7 +33,7 @@
         },
         "bundled": false,
         "commands": [
-            "anonymize"
+            "anonymize users"
         ]
     },
     "autoload": {

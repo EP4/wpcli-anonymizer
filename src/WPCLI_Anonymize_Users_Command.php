@@ -321,7 +321,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @return string
 	 */
 	private function generate_unused_user_login() {
-		$faker          = Faker\Factory::create();
+		$faker          = Factory::create();
 		$new_user_login = false;
 		$sanity_check   = 0;
 		while ( ! $new_user_login ) {
