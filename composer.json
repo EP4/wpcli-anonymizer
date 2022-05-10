@@ -1,0 +1,54 @@
+{
+    "name": "EP4/wpcli-anonymize",
+    "type": "wp-cli-package",
+    "description": "Anonymize posts and users of an existing WordPress site using WP-CLI",
+    "homepage": "https://github.com/EP4/wpcli-anonymize",
+    "license": "MIT",
+    "authors": [],
+    "require": {
+        "wp-cli/wp-cli": "^2.5"
+    },
+    "require-dev": {
+        "wp-cli/wp-cli-tests": "^3.0.11"
+    },
+    "config": {
+        "process-timeout": 7200,
+        "sort-packages": true
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-master": "2.x-dev"
+        },
+        "bundled": false,
+        "commands": [
+            "hello-world"
+        ]
+    },
+    "autoload": {
+        "psr-4": {
+            "WP_CLI\\HelloWorld\\": "src/"
+        },
+        "files": [
+            "hello-world-command.php"
+        ]
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "scripts": {
+        "behat": "run-behat-tests",
+        "behat-rerun": "rerun-behat-tests",
+        "lint": "run-linter-tests",
+        "phpcs": "run-phpcs-tests",
+        "phpunit": "run-php-unit-tests",
+        "prepare-tests": "install-package-tests",
+        "test": [
+            "@lint",
+            "@phpcs",
+            "@phpunit",
+            "@behat"
+        ]
+    },
+    "support": {
+        "issues": "https://github.com/EP4/wpcli-anonymize/issues"
+    }
+}
