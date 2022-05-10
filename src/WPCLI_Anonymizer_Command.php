@@ -1,11 +1,11 @@
 <?php
 
-namespace WP_CLI\HelloWorld;
+namespace EP4\WPCLI_Anonymizer;
 
 use WP_CLI;
 use WP_CLI_Command;
 
-class HelloWorldCommand extends WP_CLI_Command {
+class WPCLI_Anonymizer_Command extends WP_CLI_Command {
 
 	/**
 	 * Greets the world.

@@ -1,2 +1,2 @@
 require:
-  - hello-world-command.php
+  - ep4-wpcli-anonymizer-command.php
