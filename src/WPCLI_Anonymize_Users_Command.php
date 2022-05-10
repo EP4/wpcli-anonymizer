@@ -1,13 +1,17 @@
 <?php
 
+namespace EP4\WPCLI_Anonymizer;
+
 use Faker\Factory;
+use WP_CLI;
+use WP_CLI_Command;
 
 /**
  * Rewrites personally identifying information (PII) in user profiles and comments.
  *
- * @package nullvariable\wpcli-gdpr-sanitizer
+ * @package EP4\WPCLI_Anonymizer
  */
-class GDPR_Sanitizer extends \WP_CLI_Command {
+class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	/**
 	 * User ids to skip.
 	 *
@@ -44,30 +48,30 @@ class GDPR_Sanitizer extends \WP_CLI_Command {
 	 * ## EXAMPLES
 	 *
 	 *     # Rewrite all user profiles and comments.
-	 *     $ wp gdpr-sanitizer
+	 *     $ wp anonymize users
 	 *     Success: Rewrote all user data.
 	 *
 	 *     # Rewrite all user profiles except for user_id 123.
-	 *     $ wp gdpr-sanitizer --keep=1
+	 *     $ wp anonymize users --keep=1
 	 *     Success: All comments and users except: '1' rewritten.
 	 *
 	 *     # Rewrite all user profiles except ones matching user id 123, user login admin, and/or test@example.com and skip those if not found.
-	 *     $ wp gdpr-sanitizer --keep="2,admin,test@example.com" --skip-not-found
+	 *     $ wp anonymize users --keep="2,admin,test@example.com" --skip-not-found
 	 *     Success: All comments and users except: '2,1,3' rewritten.
 	 *
 	 *     # Rewrite only comments and users for one site on a multi-site install.
-	 *     $ wp gdpr-sanitizer --site=3
+	 *     $ wp anonymize users --site=3
 	 *     Success: All comments and users on site '3' rewritten.
 	 */
 	public function __invoke( $args, $assoc_args ) {
 		if ( ! empty( $args ) ) {
 			WP_CLI::warning( 'unknown argument' );
 		}
-		if ( isset( $assoc_args['keep'] ) && ! empty( $assoc_args['keep'] ) ) {
-			$this->set_excluded_user_ids( $assoc_args['keep'] );
-		}
 		if ( isset( $assoc_args['skip-not-found'] ) ) {
 			$this->skip_not_found_users = true;
+		}
+		if ( isset( $assoc_args['keep'] ) && ! empty( $assoc_args['keep'] ) ) {
+			$this->set_excluded_user_ids( $assoc_args['keep'] );
 		}
 		if ( isset( $assoc_args['site'] ) ) {
 			if ( ! is_multisite() ) {
@@ -172,7 +176,7 @@ class GDPR_Sanitizer extends \WP_CLI_Command {
 				 * @param array $commentarr new data about to be written to the database.
 				 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
 				 */
-				do_action( 'gdpr_sanitizer_pre_update_comment', $comment, $commentarr, $faker );
+				do_action( 'ep4_wpcli_anonymizer_pre_update_comment', $comment, $commentarr, $faker );
 				wp_update_comment( $commentarr );
 				/**
 				 * Post update comment.
@@ -185,7 +189,7 @@ class GDPR_Sanitizer extends \WP_CLI_Command {
 				 * @param array $commentarr new data about to be written to the database.
 				 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
 				 */
-				do_action( 'gdpr_sanitizer_post_update_comment', $comment, $commentarr, $faker );
+				do_action( 'ep4_wpcli_anonymizer_post_update_comment', $comment, $commentarr, $faker );
 				$progress->tick();
 				if ( is_multisite() ) {
 					restore_current_blog();
@@ -294,7 +298,7 @@ class GDPR_Sanitizer extends \WP_CLI_Command {
 		 * @param WP_User $user new data about to be written to the database.
 		 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
 		 */
-		do_action( 'gdpr_sanitizer_pre_update_user', $original_user, $user, $faker );
+		do_action( 'ep4_wpcli_anonymizer_pre_update_user', $original_user, $user, $faker );
 		wp_update_user( $user );
 		$this->update_user_login( $user->ID, $new_data['user_login'] );
 		/**
@@ -308,7 +312,7 @@ class GDPR_Sanitizer extends \WP_CLI_Command {
 		 * @param WP_User $user new data about to be written to the database.
 		 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
 		 */
-		do_action( 'gdpr_sanitizer_pre_update_user', $original_user, $user, $faker );
+		do_action( 'ep4_wpcli_anonymizer_pre_update_user', $original_user, $user, $faker );
 	}
 
 	/**

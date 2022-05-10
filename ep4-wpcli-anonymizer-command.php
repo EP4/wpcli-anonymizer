@@ -14,4 +14,4 @@ if ( file_exists( $wpcli_anonymizer_autoloader ) ) {
 	require_once $wpcli_anonymizer_autoloader;
 }
 
-WP_CLI::add_command( 'anonymize', EP4\WPCLI_Anonymizer_Command::class );
+WP_CLI::add_command( 'anonymize users', WPCLI_Anonymize_Users_Command::class );
