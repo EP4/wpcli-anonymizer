@@ -18,18 +18,42 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @var array
 	 */
 	protected $excluded_user_ids = array();
+
 	/**
 	 * If we can't find a user id for a name or email, should we bail?
 	 *
 	 * @var boolean
 	 */
 	protected $skip_not_found_users = false;
+
 	/**
 	 * Site id to restrict rewrite to.
 	 *
 	 * @var integer
 	 */
 	protected $limit_to_site = null;
+
+	/**
+	 * Whether empty user fields should be updated or not. Default: FALSE.
+	 *
+	 * @var boolean
+	 */
+	protected $ignore_empty_fields = false;
+
+	/**
+	 * Language of the fake content. Default: 'en_US'.
+	 * @see https://github.com/FakerPHP/Faker/tree/main/src/Faker/Provider List of available locales.
+	 *
+	 * @var string
+	 */
+	protected $locale = 'en_US';
+
+	/**
+	 * A number used to keep the same fake generated content. Default: NULL.
+	 *
+	 * @var null|integer
+	 */
+	protected $seed = null;
 
 	/**
 	 * Performs personal information replacement.
@@ -44,6 +68,15 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 *
 	 * [--site=<site_id>]
 	 * : site id to limit rewrites to.
+	 *
+	 * [--ignore-empty-fields]
+	 * : don't update fields that are currently empty.
+	 *
+	 * [--language=<locale>]
+	 * : the language of the fake content. Default: 'en_US'.
+	 *
+	 * [--seed=<integer>]
+	 * : a number used to keep generating the same fake content. Default: null.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -62,17 +95,44 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 *     # Rewrite only comments and users for one site on a multi-site install.
 	 *     $ wp anonymize users --site=3
 	 *     Success: All comments and users on site '3' rewritten.
+	 *
+	 *     # Rewrite all user profiles but don't update empty user fields.
+	 *     $ wp anonymize users --ignore-empty-fields
+	 *     Success: Rewrote all user data.
+	 *
+	 *     # Rewrite all user profiles in French with always the same fake data.
+	 *     $ wp anonymize users --language=fr_FR --seed=1000
+	 *     Success: Rewrote all user data.
 	 */
 	public function __invoke( $args, $assoc_args ) {
 		if ( ! empty( $args ) ) {
 			WP_CLI::warning( 'unknown argument' );
 		}
+
 		if ( isset( $assoc_args['skip-not-found'] ) ) {
 			$this->skip_not_found_users = true;
 		}
+
+		if ( isset( $assoc_args['ignore-empty-fields'] ) ) {
+			$this->ignore_empty_fields = true;
+		}
+
+		if ( isset( $assoc_args['ignore-empty-fields'] ) ) {
+			$this->ignore_empty_fields = true;
+		}
+
+		if ( ! empty( $assoc_args['language'] ) && Factory::findProviderClassname( $assoc_args['language'] ) ) {
+			$this->locale = $assoc_args['language'];
+		}
+
+		if ( ! empty( $assoc_args['seed'] ) && is_numeric( $assoc_args['seed'] ) ) {
+			$this->seed = $assoc_args['seed'];
+		}
+
 		if ( isset( $assoc_args['keep'] ) && ! empty( $assoc_args['keep'] ) ) {
 			$this->set_excluded_user_ids( $assoc_args['keep'] );
 		}
+
 		if ( isset( $assoc_args['site'] ) ) {
 			if ( ! is_multisite() ) {
 				WP_CLI::error( 'site parameter only valid on multi-site installs.' );
@@ -125,7 +185,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @return integer Number of comments updated.
 	 */
 	protected function obfuscate_comments() {
-		$faker        = Factory::create();
+		$faker        = $this->get_faker();
 		$count        = 0;
 		$all_comments = array();
 
@@ -259,6 +319,9 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$progress = \WP_CLI\Utils\make_progress_bar( 'Rewriting users...', $count );
 		foreach ( $users as $user ) {
 			$this->obfuscate_user( $user );
+			if ( null !== $this->seed ) {
+				$this->seed++; // Increases the seed or else the data will be the same for all users.
+			}
 			$progress->tick();
 		}
 		$progress->finish();
@@ -273,18 +336,16 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @return void
 	 */
 	private function obfuscate_user( $user ) {
-		$faker         = Factory::create();
+		$faker         = $this->get_faker();
 		$original_user = $user;
-		$new_data      = array(
-			'user_pass'     => $faker->password,
-			'user_nicename' => $faker->name,
-			'user_email'    => $faker->safeEmail,
-			'user_url'      => $faker->url,
-			'display_name'  => $faker->firstName,
-			'user_login'    => $this->generate_unused_user_login(),
-		);
+		$new_data      = $this->get_fake_user_profile_data();
+
 		foreach ( $new_data as $key => $value ) {
-			$user->{$key} = $value;
+			if ( $user->has_prop( $key ) ) {
+				if ( ! $this->ignore_empty_fields || ! empty( $user->get( $key ) ) ) {
+					$user->{$key} = $value;
+				}
+			}
 		}
 
 		/**
@@ -300,7 +361,9 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		 */
 		do_action( 'ep4_wpcli_anonymizer_pre_update_user', $original_user, $user, $faker );
 		wp_update_user( $user );
+
 		$this->update_user_login( $user->ID, $new_data['user_login'] );
+
 		/**
 		 * Post update user.
 		 *
@@ -315,21 +378,56 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		do_action( 'ep4_wpcli_anonymizer_pre_update_user', $original_user, $user, $faker );
 	}
 
+	protected function get_fake_user_profile_data() {
+		$faker = $this->get_faker();
+
+		$first_name    = $faker->firstName();
+		$last_name     = $faker->lastName();
+		$display_name  = $first_name . ' ' . $last_name;
+		$user_login    = $this->generate_unused_user_login();
+		$user_nicename = sanitize_title( $user_login );
+
+		$default_profile_fields = array(
+			// Fields from the users table.
+			'user_pass'       => $faker->password,
+			'user_nicename'   => $user_nicename,
+			'user_email'      => $faker->safeEmail,
+			'user_url'        => $faker->url,
+			'display_name'    => $display_name,
+			'user_login'      => $user_login,
+			'user_registered' => $faker->dateTimeThisDecade()->format( 'Y-m-d H:i:s' ),
+
+			// Other fields from the usermeta table.
+			'nickname'    => $user_login,
+			'first_name'  => $first_name,
+			'last_name'   => $last_name,
+			'description' => $faker->text,
+		);
+
+		$contact_methods = wp_get_user_contact_methods();
+		foreach ( $contact_methods as $method_key => $method_label ) {
+			$default_profile_fields[ $method_key ] = $user_login . '_' . str_replace( '-', '_', sanitize_title( $method_label ) );
+		}
+
+		return $default_profile_fields;
+	}
+
 	/**
 	 * Return a fake login name that doesn't exist yet.
 	 *
 	 * @return string
 	 */
-	private function generate_unused_user_login() {
-		$faker          = Factory::create();
-		$new_user_login = false;
-		$sanity_check   = 0;
+	private function generate_unused_user_login( $user_login_to_check = '' ) {
+		$faker               = $this->get_faker();
+		$new_user_login      = false;
+		$sanity_check        = 0;
+
 		while ( ! $new_user_login ) {
-			$user_login_to_check = $faker->userName;
+			$user_login_to_check = $sanity_check > 5 || empty( $user_login_to_check ) ? $faker->userName() : $user_login_to_check;
 			$user                = get_user_by( 'user_login', $user_login_to_check );
 			if ( ! $user ) {
 				$new_user_login = $user_login_to_check;
-			} elseif ( $sanity_check > 3 ) { // it would be crazy to get here, but lets try adding some random numbers.
+			} elseif ( $sanity_check > 0 ) { // it would be crazy to get here, but lets try adding some random numbers.
 				$user_login_to_check = $faker->numerify( $user_login_to_check . '#####' );
 				$user                = get_user_by( 'user_login', $user_login_to_check );
 				if ( ! $user ) {
@@ -443,5 +541,20 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 			return $user;
 		}
 		return false;
+	}
+
+	/**
+	 * Get the faker object.
+	 *
+	 * @return object $faker The faked object.
+	 */
+	protected function get_faker( $reset_data = false ) {
+		$faker = Factory::create( $this->locale );
+		
+		if ( null !== $this->seed ) {
+			$faker->seed( $this->seed );
+		}
+
+		return $faker;
 	}
 }
