@@ -421,7 +421,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$fake_data      = $this->get_fake_user_profile_data();
 		$default_fields = array_merge( 
 			array( 'user_login', 'user_pass', 'user_nicename', 'user_email', 'user_url', 'user_registered', 'user_activation_key', 'display_name' ),
-			_get_additional_user_keys()
+			_get_additional_user_keys( $user )
 		);
 
 		foreach ( $fake_data as $key => $value ) {
@@ -477,7 +477,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$first_name    = $faker->firstName();
 		$last_name     = $faker->lastName();
 		$display_name  = $first_name . ' ' . $last_name;
-		$user_login    = strtolower( str_replace( '-', '.', sanitize_user( $last_name . ' ' . $first_name ) ) );
+		$user_login    = str_replace( '-', '.', sanitize_title( $last_name . '.' . $first_name ) );
 		$user_login    = $this->generate_unused_user_login( $user_login );
 		$user_nicename = mb_strimwidth( sanitize_user( $user_login, true ), 0, 50 );
 
@@ -511,7 +511,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 
 		$contact_methods = wp_get_user_contact_methods();
 		foreach ( $contact_methods as $contact_method_key => $contact_method_label ) {
-			$profile_fields[ $contact_method_key ] = $faker->numerify( $user_login . '#####' );
+			$profile_fields[ $contact_method_key ] = $faker->numerify( str_replace( '.', '_', $user_login ) . '_#####' );
 		}
 
 		foreach ( $this->custom_fields as $user_meta => $faker_method ) {
