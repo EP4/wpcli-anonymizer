@@ -56,27 +56,51 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	protected $seed = null;
 
 	/**
+	 * A list of custom domains to use for generating fake emails. Default: empty array.
+	 *
+	 * @var array
+	 */
+	protected $custom_email_domains = array();
+
+	/**
+	 * A list of custom user meta fields for which fake data must be generated. Default: empty array.
+	 *
+	 * @var array
+	 */
+	protected $custom_fields = array();
+
+
+	/**
 	 * Performs personal information replacement.
 	 *
 	 * ## OPTIONS
 	 *
 	 * [--keep=<user_id|user_login|email>]
-	 * : user(s) to skip during replacement.
+	 * : User(s) to skip during replacement.
 	 *
 	 * [--skip-not-found]
-	 * : skip users to keep if not found, fails otherwise.
+	 * : Skip users to keep if not found, fails otherwise.
 	 *
 	 * [--site=<site_id>]
-	 * : site id to limit rewrites to.
+	 * : Site id to limit rewrites to.
 	 *
 	 * [--ignore-empty-fields]
-	 * : don't update fields that are currently empty.
+	 * : Don't update fields that are currently empty.
 	 *
 	 * [--language=<locale>]
-	 * : the language of the fake content. Default: 'en_US'.
+	 * : The language of the fake content. Default: 'en_US'.
 	 *
 	 * [--seed=<integer>]
-	 * : a number used to keep generating the same fake content. Default: null.
+	 * : A number used to keep generating the same fake content. Default: NULL.
+	 *
+	 * [--custom-email-domains=<list.com,domains.net>]
+	 * : A list of domains separated by comma to use for fake emails. Default: NULL.
+	 *
+	 * [--custom-fields=<user_meta_name::faker_format_method,user_phone_number::phone,user_custom_meta>]
+	 * : A list of custom user meta fields separated by comma for which fake data must be generated. Default: NULL.
+	 * : A custom user meta name must be associated to a faker method, by appending the method to the meta name followed by ::.
+	 * : For example, to create fake data for the user_phone meta, use `user_phone::phone`. If no method is provided, the default
+	 * : method used will be `realText( 10, 20, 3 )`.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -100,8 +124,16 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 *     $ wp anonymize users --ignore-empty-fields
 	 *     Success: Rewrote all user data.
 	 *
-	 *     # Rewrite all user profiles in French with always the same fake data.
+	 *     # Rewrite all user profiles using French data.
 	 *     $ wp anonymize users --language=fr_FR --seed=1000
+	 *     Success: Rewrote all user data.
+	 *
+	 *     # Rewrite all user profiles using either the 'test.com', 'test.org' or 'domain.net' domain for emails.
+	 *     $ wp anonymize users --custom-email-domains=test.com,test.org,domain.net
+	 *     Success: Rewrote all user data.
+	 *
+	 *     # Rewrite all user profiles in French along with specific user meta, but don't update empty user fields.
+	 *     $ wp anonymize users --ignore-empty-fields --language=fr_FR --custom-fields=user_phone::phone,user_city::city,user_company
 	 *     Success: Rewrote all user data.
 	 */
 	public function __invoke( $args, $assoc_args ) {
@@ -121,12 +153,31 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 			$this->ignore_empty_fields = true;
 		}
 
-		if ( ! empty( $assoc_args['language'] ) && Factory::findProviderClassname( $assoc_args['language'] ) ) {
+		if ( ! empty( $assoc_args['language'] ) ) {
 			$this->locale = $assoc_args['language'];
 		}
 
 		if ( ! empty( $assoc_args['seed'] ) && is_numeric( $assoc_args['seed'] ) ) {
 			$this->seed = $assoc_args['seed'];
+		}
+
+		if ( ! empty( $assoc_args['custom-email-domains'] ) ) {
+			$this->custom_email_domains = explode( ',', $assoc_args['custom-email-domains'] );
+		}
+
+		if ( ! empty( $assoc_args['custom-fields'] ) ) {
+			$fields        = explode( ',', $assoc_args['custom-fields'] );
+			$custom_fields = array();
+
+			foreach ( $fields as $field ) {
+				$field        = explode( '::', $field );
+				$field_name   = $field[0];
+				$faker_method = ! empty( $field[1] ) ? $field[1] : null;
+
+				$custom_fields[ $field_name ] = $faker_method;
+			}
+
+			$this->custom_fields = $custom_fields;
 		}
 
 		if ( isset( $assoc_args['keep'] ) && ! empty( $assoc_args['keep'] ) ) {
@@ -384,14 +435,25 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$first_name    = $faker->firstName();
 		$last_name     = $faker->lastName();
 		$display_name  = $first_name . ' ' . $last_name;
-		$user_login    = $this->generate_unused_user_login();
+		$user_login    = strtolower( str_replace( '-', '.', sanitize_title( $last_name . ' ' . $first_name ) ) );
+		$user_login    = $this->generate_unused_user_login( $user_login );
 		$user_nicename = sanitize_title( $user_login );
+		if ( ! empty( $this->custom_email_domains ) ) {
+			$domains = $this->custom_email_domains;
+			shuffle( $domains ); // Randomize the order of domains.
 
-		$default_profile_fields = array(
+			$domain     = reset( $domains );
+			$domain     = false === strpos( $domain, '.', 1 ) ? $domain . '.' . $faker->tld() : $domain;
+			$user_email = $user_login . '@' . $domain;
+		} else {
+			$user_email = $user_login . '@' . $faker->safeEmailDomain();
+		}
+
+		$profile_fields = array(
 			// Fields from the users table.
 			'user_pass'       => $faker->password,
 			'user_nicename'   => $user_nicename,
-			'user_email'      => $faker->safeEmail,
+			'user_email'      => $user_email,
 			'user_url'        => $faker->url,
 			'display_name'    => $display_name,
 			'user_login'      => $user_login,
@@ -401,15 +463,26 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 			'nickname'    => $user_login,
 			'first_name'  => $first_name,
 			'last_name'   => $last_name,
-			'description' => $faker->text,
+			'description' => $faker->realTextBetween( 100, 200, 3 ),
 		);
 
 		$contact_methods = wp_get_user_contact_methods();
 		foreach ( $contact_methods as $method_key => $method_label ) {
-			$default_profile_fields[ $method_key ] = $user_login . '_' . str_replace( '-', '_', sanitize_title( $method_label ) );
+			$profile_fields[ $method_key ] = $user_login . '.' . str_replace( '-', '.', sanitize_title( $method_label ) );
 		}
 
-		return $default_profile_fields;
+		foreach ( $this->custom_fields as $user_meta => $faker_method ) {
+			if ( ! empty( $faker_method ) ) {
+				$faker_method = str_replace( array( '(', ')' ), '', $faker_method ); // Avoids duplicate parenthesis issues.
+				$fake_data    = $faker->$faker_method();
+			} else {
+				$fake_data = $faker->realText( 10, 20, 3 );
+			}
+			
+			$profile_fields[ $user_meta ] = $fake_data;
+		}
+
+		return $profile_fields;
 	}
 
 	/**
