@@ -71,7 +71,10 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 
 
 	/**
-	 * Performs personal information replacement.
+	 * Anonymizes user profiles for development environments.
+	 *
+	 * Loops through all WordPress users in order to replace any existing data
+	 * with fake information using the Faker library.
 	 *
 	 * ## OPTIONS
 	 *
@@ -93,14 +96,14 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * [--seed=<integer>]
 	 * : A number used to keep generating the same fake content. Default: NULL.
 	 *
-	 * [--custom-email-domains=<list.com,domains.net>]
+	 * [--custom-email-domains=<domains>]
 	 * : A list of domains separated by comma to use for fake emails. Default: NULL.
 	 *
-	 * [--custom-fields=<user_meta_name::faker_format_method,user_phone_number::phone,user_custom_meta>]
+	 * [--custom-fields=<fields>]
 	 * : A list of custom user meta fields separated by comma for which fake data must be generated. Default: NULL.
-	 * : A custom user meta name must be associated to a faker method, by appending the method to the meta name followed by ::.
-	 * : For example, to create fake data for the user_phone meta, use `user_phone::phone`. If no method is provided, the default
-	 * : method used will be `realTextBetween( 10, 20, 3 )`.
+	 * A custom user meta name must be associated to a faker method, by appending the method to the meta name 
+	 * followed by ::. For example, to create fake data for the user_phone meta, use `user_phone::phone`. If no 
+	 * method is provided, the default Faker method used will be `realTextBetween( 10, 30, 5 )`.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -137,6 +140,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 *     Success: Rewrote all user data.
 	 */
 	public function __invoke( $args, $assoc_args ) {
+		// Prepares arguments.
 		if ( ! empty( $args ) ) {
 			WP_CLI::warning( 'unknown argument' );
 		}
@@ -196,6 +200,11 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 			}
 		}
 
+		// Adds the following hooks to prevent email from being sent when updating password and email fields.
+		add_filter( 'send_password_change_email', '__return_false' );
+		add_filter( 'send_email_change_email', '__return_false' );
+
+		// Starts the process.
 		WP_CLI::confirm( 'Rewrite all user data?', $assoc_args );
 		$users_updated    = $this->obfuscate_users();
 		$comments_updated = $this->obfuscate_comments();
@@ -270,8 +279,27 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 				if ( 'single_site' !== $blog_id && is_multisite() ) {
 					switch_to_blog( $blog_id );
 				}
-				$commentarr                         = $comment->to_array();
-				$commentarr['comment_author']       = $faker->name;
+				$commentarr = $comment->to_array();
+
+				if ( ! empty( $commentarr['user_id'] ) ) {
+					$user_info = get_userdata( $commentarr['user_id'] );
+				}
+
+
+				if ( ! empty( $user_info ) ) {
+					if ( ! empty( $user_info->display_name ) ) {
+						$author_name = $user_info->display_name;
+					} else {
+						$author_name = $user_info->user_login;
+					}
+
+					$user_email = $user_info->user_email;
+
+				} else {
+					$author_name = $faker->name;
+				}
+
+				$commentarr['comment_author']       = $author_name;
 				$commentarr['comment_author_email'] = $faker->safeEmail;
 				$commentarr['comment_author_url']   = $faker->url;
 				$commentarr['comment_author_IP']    = $faker->ipv4;
@@ -387,33 +415,42 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @return void
 	 */
 	private function obfuscate_user( $user ) {
-		$faker         = $this->get_faker();
-		$original_user = $user;
-		$new_data      = $this->get_fake_user_profile_data();
+		$faker          = $this->get_faker();
+		$original_user  = $user;
+		$user_data      = $user->to_array();
+		$fake_data      = $this->get_fake_user_profile_data();
+		$default_fields = array_merge( 
+			array( 'user_login', 'user_pass', 'user_nicename', 'user_email', 'user_url', 'user_registered', 'user_activation_key', 'display_name' ),
+			_get_additional_user_keys()
+		);
 
-		foreach ( $new_data as $key => $value ) {
+		foreach ( $fake_data as $key => $value ) {
 			if ( $user->has_prop( $key ) ) {
 				if ( ! $this->ignore_empty_fields || ! empty( $user->get( $key ) ) ) {
-					$user->{$key} = $value;
+					if ( in_array( $key, $default_fields, true ) ) {
+						$user_data[ $key ] = $value;
+					} else {
+						$user_data['meta_input'][ $key ] = $value;
+					}
 				}
 			}
 		}
 
 		/**
-		 * Pre update user.
+		 * Filters the fake generated user data before updating the user.
 		 *
-		 * Triggered after a single user is updated with fake information.
+		 * Triggered before a single user is updated with fake information.
 		 *
 		 * @since 1.0.0
 		 *
-		 * @param WP_User $original_user original WP_User object.
-		 * @param WP_User $user new data about to be written to the database.
-		 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
+		 * @param array   $user_data     New user data about to be written to the database.
+		 * @param WP_User $original_user The original WP_User object.
+		 * @param Factory $faker         The faker object, made available for you to generate fake data for meta fields etc.
 		 */
-		do_action( 'ep4_wpcli_anonymizer_pre_update_user', $original_user, $user, $faker );
-		wp_update_user( $user );
+		$user_data = apply_filters( 'ep4_wpcli_anonymizer_user_data', $user_data, $original_user, $faker );
 
-		$this->update_user_login( $user->ID, $new_data['user_login'] );
+		wp_update_user( $user_data );
+		$this->update_user_login( $user->ID, $fake_data['user_login'] );
 
 		/**
 		 * Post update user.
@@ -422,25 +459,31 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		 *
 		 * @since 1.0.0
 		 *
-		 * @param WP_User $original_user original WP_User object.
-		 * @param WP_User $user new data about to be written to the database.
-		 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
+		 * @param array   $user_data     New user data written to the database.
+		 * @param WP_User $original_user The original WP_User object.
+		 * @param Factory $faker         The faker object, made available for you to generate fake data for meta fields etc.
 		 */
-		do_action( 'ep4_wpcli_anonymizer_pre_update_user', $original_user, $user, $faker );
+		do_action( 'ep4_wpcli_anonymizer_user_updated', $user_data, $original_user, $faker );
 	}
 
+	/**
+	 * Gets fake user profile data.
+	 *
+	 * @return array $profile_data An array of fake profile data ready to be used.
+	 */
 	protected function get_fake_user_profile_data() {
 		$faker = $this->get_faker();
 
 		$first_name    = $faker->firstName();
 		$last_name     = $faker->lastName();
 		$display_name  = $first_name . ' ' . $last_name;
-		$user_login    = strtolower( str_replace( '-', '.', sanitize_title( $last_name . ' ' . $first_name ) ) );
+		$user_login    = strtolower( str_replace( '-', '.', sanitize_user( $last_name . ' ' . $first_name ) ) );
 		$user_login    = $this->generate_unused_user_login( $user_login );
-		$user_nicename = sanitize_title( $user_login );
+		$user_nicename = mb_strimwidth( sanitize_user( $user_login, true ), 0, 50 );
+
 		if ( ! empty( $this->custom_email_domains ) ) {
 			$domains = $this->custom_email_domains;
-			shuffle( $domains ); // Randomize the order of domains.
+			shuffle( $domains ); // Randomizes the order of domains.
 
 			$domain     = reset( $domains );
 			$domain     = false === strpos( $domain, '.', 1 ) ? $domain . '.' . $faker->tld() : $domain;
@@ -451,7 +494,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 
 		$profile_fields = array(
 			// Fields from the users table.
-			'user_pass'       => $faker->password,
+			'user_pass'       => wp_hash_password( $faker->password ),
 			'user_nicename'   => $user_nicename,
 			'user_email'      => $user_email,
 			'user_url'        => $faker->url,
@@ -467,8 +510,8 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		);
 
 		$contact_methods = wp_get_user_contact_methods();
-		foreach ( $contact_methods as $method_key => $method_label ) {
-			$profile_fields[ $method_key ] = $user_login . '.' . str_replace( '-', '.', sanitize_title( $method_label ) );
+		foreach ( $contact_methods as $contact_method_key => $contact_method_label ) {
+			$profile_fields[ $contact_method_key ] = $faker->numerify( $user_login . '#####' );
 		}
 
 		foreach ( $this->custom_fields as $user_meta => $faker_method ) {
@@ -476,7 +519,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 				$faker_method = str_replace( array( '(', ')' ), '', $faker_method ); // Avoids duplicate parenthesis issues.
 				$fake_data    = $faker->$faker_method();
 			} else {
-				$fake_data = $faker->realTextBetween( 10, 20, 3 );
+				$fake_data = rtrim( $faker->realTextBetween( 10, 30, 5 ), '.' );
 			}
 			
 			$profile_fields[ $user_meta ] = $fake_data;
@@ -496,12 +539,12 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$sanity_check        = 0;
 
 		while ( ! $new_user_login ) {
-			$user_login_to_check = $sanity_check > 5 || empty( $user_login_to_check ) ? $faker->userName() : $user_login_to_check;
+			$user_login_to_check = $sanity_check > 5 || empty( $user_login_to_check ) ? mb_strimwidth( sanitize_user( $faker->userName() ), 0, 60 ) : mb_strimwidth( sanitize_user( $user_login_to_check ), 0, 60 );
 			$user                = get_user_by( 'user_login', $user_login_to_check );
 			if ( ! $user ) {
 				$new_user_login = $user_login_to_check;
 			} elseif ( $sanity_check > 0 ) { // it would be crazy to get here, but lets try adding some random numbers.
-				$user_login_to_check = $faker->numerify( $user_login_to_check . '#####' );
+				$user_login_to_check = $faker->numerify( mb_strimwidth( $user_login_to_check, 0, 60, '#####' ) );
 				$user                = get_user_by( 'user_login', $user_login_to_check );
 				if ( ! $user ) {
 					$new_user_login = $user_login_to_check;
@@ -623,7 +666,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 */
 	protected function get_faker( $reset_data = false ) {
 		$faker = Factory::create( $this->locale );
-		
+
 		if ( null !== $this->seed ) {
 			$faker->seed( $this->seed );
 		}
