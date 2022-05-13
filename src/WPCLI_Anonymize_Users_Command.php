@@ -100,7 +100,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * : A list of custom user meta fields separated by comma for which fake data must be generated. Default: NULL.
 	 * : A custom user meta name must be associated to a faker method, by appending the method to the meta name followed by ::.
 	 * : For example, to create fake data for the user_phone meta, use `user_phone::phone`. If no method is provided, the default
-	 * : method used will be `realText( 10, 20, 3 )`.
+	 * : method used will be `realTextBetween( 10, 20, 3 )`.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -476,7 +476,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 				$faker_method = str_replace( array( '(', ')' ), '', $faker_method ); // Avoids duplicate parenthesis issues.
 				$fake_data    = $faker->$faker_method();
 			} else {
-				$fake_data = $faker->realText( 10, 20, 3 );
+				$fake_data = $faker->realTextBetween( 10, 20, 3 );
 			}
 			
 			$profile_fields[ $user_meta ] = $fake_data;
