@@ -2,7 +2,6 @@
 
 namespace EP4\WPCLI_Anonymizer;
 
-use Faker\Factory;
 use WP_CLI;
 use WP_CLI_Command;
 
@@ -13,11 +12,23 @@ use WP_CLI_Command;
  */
 class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	/**
+	 * Includes traits.
+	 */
+	use WPCLI_Anonymizer_Helpers;
+
+	/**
 	 * User ids to skip.
 	 *
 	 * @var array
 	 */
 	protected $excluded_user_ids = array();
+
+	/**
+	 * User roles to skip.
+	 *
+	 * @var array
+	 */
+	protected $excluded_user_roles = array();
 
 	/**
 	 * If we can't find a user id for a name or email, should we bail?
@@ -39,6 +50,13 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @var boolean
 	 */
 	protected $ignore_empty_fields = false;
+
+	/**
+	 * Whether the comment authors should be updated. Default: TRUE.
+	 *
+	 * @var boolean
+	 */
+	protected $update_comment_authors = true;
 
 	/**
 	 * Language of the fake content. Default: 'en_US'.
@@ -69,7 +87,6 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 */
 	protected $custom_fields = array();
 
-
 	/**
 	 * Anonymizes user profiles for development environments.
 	 *
@@ -84,11 +101,17 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * [--skip-not-found]
 	 * : Skip users to keep if not found, fails otherwise.
 	 *
+	 * [--keep-roles=<user_roles>]
+	 * : User(s) with a specific role to skip during replacement.
+	 *
 	 * [--site=<site_id>]
 	 * : Site id to limit rewrites to.
 	 *
 	 * [--ignore-empty-fields]
 	 * : Don't update fields that are currently empty.
+	 *
+	 * [--ignore-comment-authors]
+	 * : Don't update comment authors.
 	 *
 	 * [--language=<locale>]
 	 * : The language of the fake content. Default: 'en_US'.
@@ -107,17 +130,21 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     # Rewrite all user profiles and comments.
+	 *     # Rewrite all user profiles.
 	 *     $ wp anonymize users
-	 *     Success: Rewrote all user data.
+	 *     Success: All users have been rewritten.
 	 *
-	 *     # Rewrite all user profiles except for user_id 123.
-	 *     $ wp anonymize users --keep=1
-	 *     Success: All comments and users except: '1' rewritten.
+	 *     # Rewrite all user profiles except for user ID 123.
+	 *     $ wp anonymize users --keep=123
+	 *     Success: All users have been rewritten except: 123.
 	 *
-	 *     # Rewrite all user profiles except ones matching user id 123, user login admin, and/or test@example.com and skip those if not found.
-	 *     $ wp anonymize users --keep="2,admin,test@example.com" --skip-not-found
-	 *     Success: All comments and users except: '2,1,3' rewritten.
+	 *     # Rewrite all user profiles except ones matching user IDs 2 and 10, user login `admin`, and email `test@example.com`, and skip those if not found.
+	 *     $ wp anonymize users --keep="2,10,admin,test@example.com" --skip-not-found
+	 *     Success: All users have been rewritten except: 10, 456, 789.
+	 *
+	 *     # Rewrite all user profiles except those with the admin and editor roles.
+	 *     $ wp anonymize users --keep-roles=admin,editor
+	 *     Success: All users have been rewritten except: 1, 10, 11, 100.
 	 *
 	 *     # Rewrite only comments and users for one site on a multi-site install.
 	 *     $ wp anonymize users --site=3
@@ -142,63 +169,19 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	public function __invoke( $args, $assoc_args ) {
 		// Prepares arguments.
 		if ( ! empty( $args ) ) {
-			WP_CLI::warning( 'unknown argument' );
+			WP_CLI::warning( 'Unknown argument' );
 		}
 
-		if ( isset( $assoc_args['skip-not-found'] ) ) {
-			$this->skip_not_found_users = true;
-		}
-
-		if ( isset( $assoc_args['ignore-empty-fields'] ) ) {
-			$this->ignore_empty_fields = true;
-		}
-
-		if ( isset( $assoc_args['ignore-empty-fields'] ) ) {
-			$this->ignore_empty_fields = true;
-		}
-
-		if ( ! empty( $assoc_args['language'] ) ) {
-			$this->locale = $assoc_args['language'];
-		}
-
-		if ( ! empty( $assoc_args['seed'] ) && is_numeric( $assoc_args['seed'] ) ) {
-			$this->seed = $assoc_args['seed'];
-		}
-
-		if ( ! empty( $assoc_args['custom-email-domains'] ) ) {
-			$this->custom_email_domains = explode( ',', $assoc_args['custom-email-domains'] );
-		}
-
-		if ( ! empty( $assoc_args['custom-fields'] ) ) {
-			$fields        = explode( ',', $assoc_args['custom-fields'] );
-			$custom_fields = array();
-
-			foreach ( $fields as $field ) {
-				$field        = explode( '::', $field );
-				$field_name   = $field[0];
-				$faker_method = ! empty( $field[1] ) ? $field[1] : null;
-
-				$custom_fields[ $field_name ] = $faker_method;
-			}
-
-			$this->custom_fields = $custom_fields;
-		}
-
-		if ( isset( $assoc_args['keep'] ) && ! empty( $assoc_args['keep'] ) ) {
-			$this->set_excluded_user_ids( $assoc_args['keep'] );
-		}
-
-		if ( isset( $assoc_args['site'] ) ) {
-			if ( ! is_multisite() ) {
-				WP_CLI::error( 'site parameter only valid on multi-site installs.' );
-			}
-			if ( is_numeric( $assoc_args['site'] ) ) {
-				$this->limit_to_site = (int) $assoc_args['site'];
-
-			} else {
-				WP_CLI::error( 'site must be a number' );
-			}
-		}
+		$this->skip_not_found_users    = false !== WP_CLI\Utils\get_flag_value( $assoc_args, 'skip-not-found', false );
+		$this->ignore_empty_fields     = false !== WP_CLI\Utils\get_flag_value( $assoc_args, 'ignore-empty-fields', false );
+		$this->update_comment_authors  = false === WP_CLI\Utils\get_flag_value( $assoc_args, 'ignore-comment-authors', false );
+		$this->locale                  = WP_CLI\Utils\get_flag_value( $assoc_args, 'language', 'en_US' );
+		$this->seed                    = WP_CLI\Utils\get_flag_value( $assoc_args, 'seed', null );
+		$this->custom_email_domains    = ! empty( $assoc_args['custom-email-domains'] ) ? explode( ',', $assoc_args['custom-email-domains'] ) : array();
+		$this->excluded_user_ids       = $this->format_user_ids( WP_CLI\Utils\get_flag_value( $assoc_args, 'keep', false ) );
+		$this->excluded_user_roles     = wp_parse_list( WP_CLI\Utils\get_flag_value( $assoc_args, 'keep-roles', array() ) );
+		$this->limit_to_site           = $this->validate_site_id( WP_CLI\Utils\get_flag_value( $assoc_args, 'site', null ) );
+		$this->custom_fields           = $this->string_to_associative_array( WP_CLI\Utils\get_flag_value( $assoc_args, 'custom-fields', null ) );
 
 		// Adds the following hooks to prevent email from being sent when updating password and email fields.
 		add_filter( 'send_password_change_email', '__return_false' );
@@ -206,159 +189,34 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 
 		// Starts the process.
 		WP_CLI::confirm( 'Rewrite all user data?', $assoc_args );
-		$users_updated    = $this->obfuscate_users();
-		$comments_updated = $this->obfuscate_comments();
-		$items            = array(
+		$users_updated = $this->obfuscate_users();
+		$items         = array(
 			array(
-				'Updated' => 'Users',
-				'Count'   => $users_updated,
-			),
-			array(
-				'Updated' => 'Comments',
-				'Count'   => $comments_updated,
+				'Updated'  => 'Users',
+				'Count'    => $users_updated,
 			),
 		);
+
+		// Completed.
 		WP_CLI\Utils\format_items( 'table', $items, array( 'Updated', 'Count' ) );
 		if ( count( $this->excluded_user_ids ) > 0 ) {
-			$ids_string = implode( ',', $this->excluded_user_ids );
+			$ids_string = implode( ', ', $this->excluded_user_ids );
 			if ( ! empty( $this->limit_to_site ) ) {
 				WP_CLI::success( sprintf(
-					'All comments and users except: \'%s\' on site \'%s\' rewritten.',
-					$ids_string,
-					$this->limit_to_site
+					'All users on site \'%s\' have been rewriten, except: \'%s\'.',
+					$this->limit_to_site,
+					$ids_string
 				) );
 			} else {
-				WP_CLI::success( sprintf( 'All comments and users except: \'%s\' rewritten.', $ids_string ) );
+				WP_CLI::success( sprintf( 'All users have been rewritten except: \'%s\'.', $ids_string ) );
 			}
 		} else {
 			if ( ! empty( $this->limit_to_site ) ) {
-				WP_CLI::success( sprintf( 'All comments and users on site \'%s\' rewritten.' ) );
+				WP_CLI::success( sprintf( 'All users on site \'%s\' have been rewritten.' ) );
 			} else {
-				WP_CLI::success( sprintf( 'All comments and users rewritten.' ) );
+				WP_CLI::success( sprintf( 'All users have been rewritten.' ) );
 			}
 		}
-	}
-
-	/**
-	 * Rewrite the PII found in standard WordPress comments.
-	 *
-	 * @return integer Number of comments updated.
-	 */
-	protected function obfuscate_comments() {
-		$faker        = $this->get_faker();
-		$count        = 0;
-		$all_comments = array();
-
-		if ( ! is_multisite() ) {
-			$data                        = $this->gather_comments( null );
-			$count                       = count( $data );
-			$all_comments['single_site'] = $data;
-		} else {
-			if ( ! empty( $this->limit_to_site ) ) {
-				$site = get_site( $this->limit_to_site );
-				if ( ! empty( $site ) ) {
-					$data                           = $this->gather_comments( $site->blog_id );
-					$count                          = $count + count( $data );
-					$all_comments[ $site->blog_id ] = $data;
-				} else {
-					WP_CLI::error( 'Site not found.' );
-				}
-			} else {
-				$sites = get_sites();
-				foreach ( $sites as $site ) {
-					$data                           = $this->gather_comments( $site->blog_id );
-					$count                          = $count + count( $data );
-					$all_comments[ $site->blog_id ] = $data;
-				}
-			}
-		}
-
-		$progress = \WP_CLI\Utils\make_progress_bar( 'Rewriting comments...', $count );
-		foreach ( $all_comments as $blog_id => $comments ) {
-			foreach ( $comments as $comment ) {
-				if ( 'single_site' !== $blog_id && is_multisite() ) {
-					switch_to_blog( $blog_id );
-				}
-				$commentarr = $comment->to_array();
-
-				if ( ! empty( $commentarr['user_id'] ) ) {
-					$user_info = get_userdata( $commentarr['user_id'] );
-				}
-
-
-				if ( ! empty( $user_info ) ) {
-					if ( ! empty( $user_info->display_name ) ) {
-						$author_name = $user_info->display_name;
-					} else {
-						$author_name = $user_info->user_login;
-					}
-
-					$user_email = $user_info->user_email;
-
-				} else {
-					$author_name = $faker->name;
-				}
-
-				$commentarr['comment_author']       = $author_name;
-				$commentarr['comment_author_email'] = $faker->safeEmail;
-				$commentarr['comment_author_url']   = $faker->url;
-				$commentarr['comment_author_IP']    = $faker->ipv4;
-				$commentarr['comment_agent']        = $faker->userAgent;
-				/**
-				 * Pre-update Comment.
-				 *
-				 * Triggered before a single comment is updated with fake information. Allows you to modify custom meta fields when the plugin is triggered.
-				 *
-				 * @since 1.0.0
-				 *
-				 * @param WP_Comment $comment original WP_Comment object.
-				 * @param array $commentarr new data about to be written to the database.
-				 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
-				 */
-				do_action( 'ep4_wpcli_anonymizer_pre_update_comment', $comment, $commentarr, $faker );
-				wp_update_comment( $commentarr );
-				/**
-				 * Post update comment.
-				 *
-				 * Triggered after a single comment is updated with fake information.
-				 *
-				 * @since 1.0.0
-				 *
-				 * @param WP_Comment $comment original WP_Comment object.
-				 * @param array $commentarr new data about to be written to the database.
-				 * @param Factory $faker the faker object, made available for you to generate fake data for meta fields etc.
-				 */
-				do_action( 'ep4_wpcli_anonymizer_post_update_comment', $comment, $commentarr, $faker );
-				$progress->tick();
-				if ( is_multisite() ) {
-					restore_current_blog();
-				}
-			}
-		}
-		$progress->finish();
-		return $count;
-	}
-
-	/**
-	 * Gather comments for a single blog.
-	 *
-	 * @param integer $blog_id blog id.
-	 *
-	 * @return array
-	 */
-	protected function gather_comments( $blog_id ) {
-		if ( is_int( $blog_id ) && is_multisite() ) {
-			switch_to_blog( $blog_id );
-		}
-		$trash_comments   = get_comments( array( 'status' => 'trash' ) );
-		$spam_comments    = get_comments( array( 'status' => 'spam' ) );
-		$regular_comments = get_comments();
-
-		if ( is_multisite() ) {
-			restore_current_blog();
-		}
-
-		return array_merge( $regular_comments, $trash_comments, $spam_comments );
 	}
 
 	/**
@@ -377,8 +235,10 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 			foreach ( $sites as $site ) {
 				$site_users = get_users(
 					array(
-						'blog_id' => $site->blog_id,
-						'exclude' => $this->excluded_user_ids,
+						'blog_id'      => $site->blog_id,
+						'exclude'      => $this->excluded_user_ids,
+						'role__not_in' => $this->excluded_user_roles,
+						'fields'       => 'all_with_meta',
 					)
 				);
 				$users      = array_merge( $users, $site_users );
@@ -386,7 +246,9 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		} else {
 			$users = get_users(
 				array(
-					'exclude' => $this->excluded_user_ids,
+					'exclude'      => $this->excluded_user_ids,
+					'role__not_in' => $this->excluded_user_roles,
+					'fields'       => 'all_with_meta',
 				)
 			);
 		}
@@ -397,10 +259,30 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$count    = count( $users );
 		$progress = \WP_CLI\Utils\make_progress_bar( 'Rewriting users...', $count );
 		foreach ( $users as $user ) {
-			$this->obfuscate_user( $user );
 			if ( null !== $this->seed ) {
 				$this->seed++; // Increases the seed or else the data will be the same for all users.
 			}
+
+			$this->obfuscate_user( $user );
+
+			if ( $this->update_comment_authors ) {
+				$command_args = array(
+					'anonymize comments',
+					'users'                  => $user->ID,
+					'language'               => $this->locale,
+					'seed'                   => $this->seed,
+					'custom-email-domains'   => $this->custom_email_domains,
+					'site'                   => $this->limit_to_site,
+					'skip-not-found'         => $this->skip_not_found_users,
+					'ignore-empty-fields'    => $this->ignore_empty_fields,
+					'only-author-fields'     => true, // TRUE means no value is expected for this flag.
+					'use-existing-user-data' => true,
+					'yes'                    => true, // Used for bypassing dialogs.
+				);
+
+				WP_CLI::runcommand( $this->array_to_cmd( $command_args ), array( 'exit_error' => false ) );
+			}
+
 			$progress->tick();
 		}
 		$progress->finish();
@@ -511,7 +393,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 
 		$contact_methods = wp_get_user_contact_methods();
 		foreach ( $contact_methods as $contact_method_key => $contact_method_label ) {
-			$profile_fields[ $contact_method_key ] = $faker->numerify( str_replace( '.', '_', $user_login ) . '_#####' );
+			$profile_fields[ $contact_method_key ] = $faker->numerify( strtolower( $first_name ) . '_#####' );
 		}
 
 		foreach ( $this->custom_fields as $user_meta => $faker_method ) {
@@ -521,7 +403,7 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 			} else {
 				$fake_data = rtrim( $faker->realTextBetween( 10, 30, 5 ), '.' );
 			}
-			
+
 			$profile_fields[ $user_meta ] = $fake_data;
 		}
 
@@ -534,9 +416,9 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 	 * @return string
 	 */
 	private function generate_unused_user_login( $user_login_to_check = '' ) {
-		$faker               = $this->get_faker();
-		$new_user_login      = false;
-		$sanity_check        = 0;
+		$faker          = $this->get_faker();
+		$new_user_login = false;
+		$sanity_check   = 0;
 
 		while ( ! $new_user_login ) {
 			$user_login_to_check = $sanity_check > 5 || empty( $user_login_to_check ) ? mb_strimwidth( sanitize_user( $faker->userName() ), 0, 60 ) : mb_strimwidth( sanitize_user( $user_login_to_check ), 0, 60 );
@@ -550,10 +432,11 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 					$new_user_login = $user_login_to_check;
 				}
 			}
+
 			$sanity_check ++;
 			// it should be impossible to get here.
 			if ( $sanity_check > 30 ) {
-				WP_CLI::error( 'Unable to find a fake username that was not already in use' );
+				WP_CLI::error( 'Unable to find a fake username that was not already in use. Consider running the script once again. Aborting...' );
 			}
 		}
 
@@ -573,104 +456,4 @@ class WPCLI_Anonymize_Users_Command extends WP_CLI_Command {
 		$wpdb->update( $wpdb->users, array( 'user_login' => $new_login ), array( 'ID' => $user_id ) );
 	}
 
-	/**
-	 * Process incoming --keep argument into excluded user ids array
-	 *
-	 * @param string $arg_string The --keep argument value.
-	 *
-	 * @return integer Number of user ids excluded.
-	 */
-	private function set_excluded_user_ids( $arg_string ) {
-		$excluded_user_ids = array();
-		if ( stristr( $arg_string, ',' ) ) {
-			$strings = explode( ',', $arg_string );
-			foreach ( $strings as $string ) {
-				$excluded_user_ids[] = $this->string_to_user( $string );
-			}
-		} else {
-			$excluded_user_ids[] = $this->string_to_user( $arg_string );
-		}
-		$this->excluded_user_ids = $excluded_user_ids;
-		return count( $this->excluded_user_ids );
-	}
-
-	/**
-	 * Returns a user id from an email, user login, or string id
-	 *
-	 * @param string $string A single segment of the --keep argument.
-	 *
-	 * @return integer|boolean User id or false if not found but skipping is ok.
-	 */
-	private function string_to_user( $string ) {
-		if ( is_numeric( $string ) ) {
-			return (int) $string;
-		}
-		if ( stristr( $string, '@' ) ) {
-			$user = ( is_multisite() ) ? get_user_by( 'email', $string ) : $this->ms_get_user_by( 'email', $string );
-			if ( $user ) {
-				return $user->ID;
-			} else {
-				if ( $this->skip_not_found_users ) {
-					WP_CLI::warning( 'user email not found' );
-				} else {
-					WP_CLI::error( 'user email not found' );
-				}
-			}
-		}
-		$user = ( is_multisite() ) ? get_user_by( 'login', $string ) : $this->ms_get_user_by( 'login', $string );
-		if ( $user ) {
-			return $user->ID;
-		}
-		if ( $this->skip_not_found_users ) {
-			WP_CLI::warning( 'username to keep not found, skipping' );
-		} else {
-			WP_CLI::error( 'username to keep not found' );
-		}
-
-		return false;
-	}
-
-	/**
-	 * Get a user by field for multisite.
-	 *
-	 * @param string $field field name.
-	 * @param string $string string to search by.
-	 */
-	protected function ms_get_user_by( $field, $string ) {
-		global $wpdb;
-		if ( 'login' === $field ) {
-			$user_id = $wpdb->get_var( $wpdb->prepare(
-				"SELECT ID FROM $wpdb->users WHERE `user_login` = %s LIMIT 1",
-				$string
-			) );
-		} elseif ( 'email' ) {
-			$user_id = $wpdb->get_var( $wpdb->prepare(
-				"SELECT ID FROM $wpdb->users WHERE `user_email` = %s LIMIT 1",
-				$string
-			) );
-		} else {
-			WP_CLI::error( 'Unrecognized user search field.' );
-		}
-		if ( ! empty( $user_id ) ) {
-			$user     = new stdClass();
-			$user->ID = $user_id;
-			return $user;
-		}
-		return false;
-	}
-
-	/**
-	 * Get the faker object.
-	 *
-	 * @return object $faker The faked object.
-	 */
-	protected function get_faker( $reset_data = false ) {
-		$faker = Factory::create( $this->locale );
-
-		if ( null !== $this->seed ) {
-			$faker->seed( $this->seed );
-		}
-
-		return $faker;
-	}
 }

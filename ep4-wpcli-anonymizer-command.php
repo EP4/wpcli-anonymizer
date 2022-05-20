@@ -15,3 +15,4 @@ if ( file_exists( $wpcli_anonymizer_autoloader ) ) {
 }
 
 WP_CLI::add_command( 'anonymize users', WPCLI_Anonymize_Users_Command::class );
+WP_CLI::add_command( 'anonymize comments', WPCLI_Anonymize_Comments_Command::class );
